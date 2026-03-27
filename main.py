@@ -309,4 +309,4 @@ with ui.card().classes('w-full p-4 mb-4'):
 # Создаем пустой контейнер для результатов
 result_container = ui.column().classes('w-full')
 
-ui.run(title='Составление ежемесячного отчёта', reload=True, port=8080)
+ui.run(title='Составление ежемесячного отчёта по', reload=True, port=8080)
