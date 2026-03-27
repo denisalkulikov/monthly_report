@@ -183,7 +183,7 @@ def create_expandable_row(direction, direction_total, year_value, month_number):
             else:
                 ui.label('Нет данных по продуктам в этом направлении').classes('text-grey-6')
 
-def process_excel_file(file_content, file_name, selected_month_name, selected_year):
+def process_excel_file(file_content, file_name, selected_month_name, selected_year, client):
     """Обработка Excel файла"""
     temp_file_path = None
     try:
@@ -199,7 +199,8 @@ def process_excel_file(file_content, file_name, selected_month_name, selected_ye
         if "служ" in wb.sheetnames:
             sheet = wb["служ"]
         else:
-            ui.notify('Лист "служ" не найден в файле', type='negative')
+            with client:
+                ui.notify('Лист "служ" не найден в файле', type='negative')
             return
         
         # Получаем данные для заполнения
@@ -220,13 +221,14 @@ def process_excel_file(file_content, file_name, selected_month_name, selected_ye
         wb.save(output_path)
         wb.close()
         
-        ui.notify(f'Файл успешно сохранен как: {output_filename}', type='positive')
-        
-        # Предлагаем скачать файл
-        ui.download(output_path)
+        with client:
+            ui.notify(f'Файл успешно сохранен как: {output_filename}', type='positive')
+            # Предлагаем скачать файл
+            ui.download(output_path)
         
     except Exception as e:
-        ui.notify(f'Ошибка при обработке файла: {e}', type='negative')
+        with client:
+            ui.notify(f'Ошибка при обработке файла: {e}', type='negative')
         import traceback
         traceback.print_exc()
     finally:
@@ -243,11 +245,14 @@ async def on_file_upload(e, selected_month_name, selected_year):
         ui.notify('Сначала выберите год и месяц', type='warning')
         return
     
+    # Получаем текущего клиента
+    client = ui.context.client
+    
     # Получаем информацию о загруженном файле
     file_content = await e.file.read()
     file_name = e.file.name
     
-    process_excel_file(file_content, file_name, selected_month_name, selected_year)
+    process_excel_file(file_content, file_name, selected_month_name, selected_year, client)
 
 def on_button_click():
     """Обработчик нажатия кнопки получения данных"""

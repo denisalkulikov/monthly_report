@@ -27,6 +27,7 @@ pythonenv*
 *.csv
 *.xlsx
 *.xls
+*.xlsm
 
 # Прогнозы
 *forecast*.csv
