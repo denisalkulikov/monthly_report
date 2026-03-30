@@ -5,10 +5,8 @@ import os
 import warnings
 import openpyxl
 from openpyxl import load_workbook
-from datetime import datetime
-import shutil
-import tempfile
 import asyncio
+import tempfile
 
 load_dotenv()
 
@@ -39,20 +37,20 @@ month_to_number = {
     'Сентябрь': 9, 'Октябрь': 10, 'Ноябрь': 11, 'Декабрь': 12
 }
 
-# Словарь для преобразования названия месяца в родительный падеж
-month_to_genitive = {
-    'Январь': 'января',
-    'Февраль': 'февраля',
-    'Март': 'марта',
-    'Апрель': 'апреля',
-    'Май': 'мая',
-    'Июнь': 'июня',
-    'Июль': 'июля',
-    'Август': 'августа',
-    'Сентябрь': 'сентября',
-    'Октябрь': 'октября',
-    'Ноябрь': 'ноября',
-    'Декабрь': 'декабря'
+# Словарь для преобразования названия месяца в именительный падеж с маленькой буквы
+month_to_nominative_lower = {
+    'Январь': 'январь',
+    'Февраль': 'февраль',
+    'Март': 'март',
+    'Апрель': 'апрель',
+    'Май': 'май',
+    'Июнь': 'июнь',
+    'Июль': 'июль',
+    'Август': 'август',
+    'Сентябрь': 'сентябрь',
+    'Октябрь': 'октябрь',
+    'Ноябрь': 'ноябрь',
+    'Декабрь': 'декабрь'
 }
 
 # Словарь для преобразования названия месяца в предложный падеж
@@ -183,16 +181,11 @@ def create_expandable_row(direction, direction_total, year_value, month_number):
             else:
                 ui.label('Нет данных по продуктам в этом направлении').classes('text-grey-6')
 
-def process_excel_file(file_content, file_name, selected_month_name, selected_year, client):
+def process_excel_file(temp_file_path, selected_month_name, selected_year, client):
     """Обработка Excel файла"""
-    temp_file_path = None
+    output_path = None
     try:
-        # Создаем временный файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsm') as tmp_file:
-            tmp_file.write(file_content)
-            temp_file_path = tmp_file.name
-        
-        # Загружаем workbook
+        # Загружаем workbook из временного файла
         wb = load_workbook(temp_file_path, keep_vba=True)
         
         # Выбираем лист "служ"
@@ -205,24 +198,26 @@ def process_excel_file(file_content, file_name, selected_month_name, selected_ye
         
         # Получаем данные для заполнения
         month_number = month_to_number[selected_month_name]
+        month_nominative = month_to_nominative_lower[selected_month_name]
         month_prepositional = month_to_prepositional[selected_month_name]
         
         # Заполняем ячейки
-        sheet['B1'] = f"{selected_month_name} "  # с пробелом
-        sheet['B2'] = f"{month_prepositional} "  # с пробелом
-        sheet['B3'] = str(month_number)  # без пробела
-        sheet['B4'] = str(selected_year)  # без пробела
+        sheet['B1'] = f"{month_nominative} "
+        sheet['B2'] = f"{month_prepositional} "
+        sheet['B3'] = str(month_number)
+        sheet['B4'] = str(selected_year)
         
         # Формируем имя для сохранения
         output_filename = f"Самара {month_number} Отчет {selected_year} {selected_month_name}.xlsm"
         
-        # Сохраняем файл
-        output_path = os.path.join(os.getcwd(), output_filename)
+        # Сохраняем во временную папку
+        temp_dir = tempfile.gettempdir()
+        output_path = os.path.join(temp_dir, output_filename)
         wb.save(output_path)
         wb.close()
         
         with client:
-            ui.notify(f'Файл успешно сохранен как: {output_filename}', type='positive')
+            ui.notify(f'Файл успешно создан: {output_filename}', type='positive')
             # Предлагаем скачать файл
             ui.download(output_path)
         
@@ -232,27 +227,29 @@ def process_excel_file(file_content, file_name, selected_month_name, selected_ye
         import traceback
         traceback.print_exc()
     finally:
-        # Удаляем временный файл
-        if temp_file_path and os.path.exists(temp_file_path):
+        # Удаляем временный файл (исходный загруженный файл)
+        if os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
             except:
                 pass
 
-async def on_file_upload(e, selected_month_name, selected_year):
-    """Обработчик загрузки файла (асинхронный)"""
+async def handle_file_upload(e, selected_month_name, selected_year, client):
+    """Асинхронная обработка загрузки файла"""
     if not selected_month_name or not selected_year:
-        ui.notify('Сначала выберите год и месяц', type='warning')
+        with client:
+            ui.notify('Сначала выберите год и месяц', type='warning')
         return
     
-    # Получаем текущего клиента
-    client = ui.context.client
+    # Создаем временный файл с правильным расширением
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsm') as tmp_file:
+        # Асинхронно читаем файл
+        file_content = await e.file.read()
+        tmp_file.write(file_content)
+        temp_file_path = tmp_file.name
     
-    # Получаем информацию о загруженном файле
-    file_content = await e.file.read()
-    file_name = e.file.name
-    
-    process_excel_file(file_content, file_name, selected_month_name, selected_year, client)
+    # Обрабатываем файл
+    process_excel_file(temp_file_path, selected_month_name, selected_year, client)
 
 def on_button_click():
     """Обработчик нажатия кнопки получения данных"""
@@ -297,10 +294,11 @@ with ui.card().classes('w-full p-4 mb-4'):
         # Кнопка для загрузки файла
         upload_btn = ui.upload(
             label='Выбрать файл XLSM',
-            on_upload=lambda e: asyncio.create_task(on_file_upload(
+            on_upload=lambda e: asyncio.create_task(handle_file_upload(
                 e, 
                 select_month.value, 
-                select_year.value
+                select_year.value,
+                ui.context.client
             )),
             auto_upload=True
         ).classes('w-auto')
@@ -309,4 +307,4 @@ with ui.card().classes('w-full p-4 mb-4'):
 # Создаем пустой контейнер для результатов
 result_container = ui.column().classes('w-full')
 
-ui.run(title='Составление ежемесячного отчёта по', reload=True, port=8080)
+ui.run(title='Составление ежемесячного отчёта', reload=True, port=8080)
