@@ -69,6 +69,29 @@ month_to_prepositional = {
     'Декабрь': 'декабре'
 }
 
+# Словарь для преобразования названия месяца в букву колонки (A=1, B=2, etc.)
+month_to_column = {
+    1: 'B',   # Январь
+    2: 'C',   # Февраль
+    3: 'D',   # Март
+    4: 'E',   # Апрель
+    5: 'F',   # Май
+    6: 'G',   # Июнь
+    7: 'H',   # Июль
+    8: 'I',   # Август
+    9: 'J',   # Сентябрь
+    10: 'K',  # Октябрь
+    11: 'L',  # Ноябрь
+    12: 'M'   # Декабрь
+}
+
+# Глобальные переменные для хранения данных и состояния UI
+cached_data = None
+cached_sales_data = None
+cached_monthly_group_data = None
+cached_sales_responsibility_data = None
+current_results_container = None
+
 def get_db_connection():
     """Создание подключения к БД"""
     try:
@@ -104,6 +127,155 @@ def fetch_data_by_direction(year_value, month_number):
         
     except Exception as e:
         ui.notify(f'Ошибка при выполнении запроса: {e}', type='negative')
+        return None
+
+def fetch_data_for_directions(year_value, month_number):
+    """Запрос для получения сумм по конкретным направлениям (с учетом регистра)"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return None
+        
+        cur = conn.cursor()
+        
+        # Используем UPPER для поиска без учета регистра
+        query = """
+        SELECT direction, SUM(pay_summ) as total_summ
+        FROM kamtent.monthly_group_product
+        WHERE year = %s AND month = %s 
+        AND UPPER(direction) IN ('ОАИ', 'ТК', 'АНГАРЫ', 'РЕКЛАМА', 'КН')
+        GROUP BY direction
+        """
+        
+        cur.execute(query, (year_value, month_number))
+        results = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+        
+        # Преобразуем в словарь для удобства
+        result_dict = {row[0]: row[1] for row in results}
+        
+        # Добавим отладочный вывод
+        print(f"Данные из БД для направлений: {result_dict}")
+        
+        return result_dict
+        
+    except Exception as e:
+        ui.notify(f'Ошибка при выполнении запроса: {e}', type='negative')
+        return None
+
+def fetch_sales_data(year_value, month_number):
+    """Запрос для получения данных из таблицы sales для листа Авто (РОЗНИЦА и ПОТРЕБИТЕЛИ)"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return None
+        
+        cur = conn.cursor()
+        
+        # Запрос для получения суммы по РОЗНИЦА и ПОТРЕБИТЕЛИ (используем pay_date)
+        query = """
+        SELECT segment, SUM(pay_summ) as total_summ
+        FROM kamtent.sales
+        WHERE EXTRACT(YEAR FROM pay_date) = %s 
+        AND EXTRACT(MONTH FROM pay_date) = %s
+        AND direction = 'ОАИ'
+        AND segment IN ('РОЗНИЦА', 'ПОТРЕБИТЕЛИ')
+        GROUP BY segment
+        """
+        
+        cur.execute(query, (year_value, month_number))
+        results = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+        
+        # Преобразуем в словарь для удобства
+        result_dict = {row[0]: row[1] for row in results}
+        
+        # Добавим отладочный вывод
+        print(f"Данные из sales для segment: {result_dict}")
+        
+        return result_dict
+        
+    except Exception as e:
+        ui.notify(f'Ошибка при выполнении запроса к sales: {e}', type='negative')
+        return None
+
+def fetch_sales_responsibility_data(year_value, month_number):
+    """Запрос для получения данных из таблицы sales по responsibility"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return None
+        
+        cur = conn.cursor()
+        
+        # Запрос для получения суммы по responsibility (своя и чужая)
+        query = """
+        SELECT responsibility, SUM(pay_summ) as total_summ
+        FROM kamtent.sales
+        WHERE EXTRACT(YEAR FROM pay_date) = %s 
+        AND EXTRACT(MONTH FROM pay_date) = %s
+        AND direction = 'ОАИ'
+        AND LOWER(responsibility) IN ('своя', 'чужая')
+        GROUP BY responsibility
+        """
+        
+        cur.execute(query, (year_value, month_number))
+        results = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+        
+        # Преобразуем в словарь для удобства
+        result_dict = {row[0].upper(): row[1] for row in results}
+        
+        # Добавим отладочный вывод
+        print(f"Данные из sales для responsibility: {result_dict}")
+        
+        return result_dict
+        
+    except Exception as e:
+        ui.notify(f'Ошибка при выполнении запроса к sales (responsibility): {e}', type='negative')
+        return None
+
+def fetch_monthly_group_products(year_value, month_number):
+    """Запрос для получения данных из monthly_group_product для листа Авто"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return None
+        
+        cur = conn.cursor()
+        
+        # Запрос для получения сумм по конкретным group_product
+        query = """
+        SELECT group_product, SUM(pay_summ) as total_summ
+        FROM kamtent.monthly_group_product
+        WHERE year = %s AND month = %s 
+        AND direction = 'ОАИ'
+        AND group_product IN ('МСК', 'АВТОТЕНТЫ', 'АВТОУСЛУГИ', 'РЕМОНТ', 'ПРОЧЕЕ', 'АВТОКАРКАСЫ', 'ВОРОТА', 'АВТОПОЛОГИ')
+        GROUP BY group_product
+        """
+        
+        cur.execute(query, (year_value, month_number))
+        results = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+        
+        # Преобразуем в словарь для удобства
+        result_dict = {row[0]: row[1] for row in results}
+        
+        # Добавим отладочный вывод
+        print(f"Данные из monthly_group_product для group_product: {result_dict}")
+        
+        return result_dict
+        
+    except Exception as e:
+        ui.notify(f'Ошибка при выполнении запроса к monthly_group_product: {e}', type='negative')
         return None
 
 def fetch_group_products(year_value, month_number, direction):
@@ -181,31 +353,118 @@ def create_expandable_row(direction, direction_total, year_value, month_number):
             else:
                 ui.label('Нет данных по продуктам в этом направлении').classes('text-grey-6')
 
-def process_excel_file(temp_file_path, selected_month_name, selected_year, client):
+def process_excel_file(temp_file_path, selected_month_name, selected_year, directions_data, sales_data, monthly_group_data, sales_responsibility_data, client):
     """Обработка Excel файла"""
     output_path = None
     try:
         # Загружаем workbook из временного файла
         wb = load_workbook(temp_file_path, keep_vba=True)
         
-        # Выбираем лист "служ"
+        # 1. Обработка листа "служ"
         if "служ" in wb.sheetnames:
-            sheet = wb["служ"]
+            sheet_serv = wb["служ"]
+            
+            # Получаем данные для заполнения
+            month_number = month_to_number[selected_month_name]
+            month_nominative = month_to_nominative_lower[selected_month_name]
+            month_prepositional = month_to_prepositional[selected_month_name]
+            
+            # Заполняем ячейки
+            sheet_serv['B1'] = f"{month_nominative} "
+            sheet_serv['B2'] = f"{month_prepositional} "
+            sheet_serv['B3'] = str(month_number)
+            sheet_serv['B4'] = str(selected_year)
         else:
             with client:
-                ui.notify('Лист "служ" не найден в файле', type='negative')
-            return
+                ui.notify('Лист "служ" не найден в файле', type='warning')
         
-        # Получаем данные для заполнения
-        month_number = month_to_number[selected_month_name]
-        month_nominative = month_to_nominative_lower[selected_month_name]
-        month_prepositional = month_to_prepositional[selected_month_name]
+        # 2. Обработка листа "тит"
+        if "тит" in wb.sheetnames:
+            sheet_tit = wb["тит"]
+            sheet_tit['F44'] = str(selected_year)
+        else:
+            with client:
+                ui.notify('Лист "тит" не найден в файле', type='warning')
         
-        # Заполняем ячейки
-        sheet['B1'] = f"{month_nominative} "
-        sheet['B2'] = f"{month_prepositional} "
-        sheet['B3'] = str(month_number)
-        sheet['B4'] = str(selected_year)
+        # 3. Обработка листа "общ"
+        if "общ" in wb.sheetnames:
+            sheet_obsh = wb["общ"]
+            month_number = month_to_number[selected_month_name]
+            column_letter = month_to_column[month_number]
+            
+            # Сопоставление направлений (учитываем возможный регистр в БД)
+            direction_cells = {
+                'ОАИ': '40',
+                'ТК': '41',
+                'АНГАРЫ': '43',
+                'РЕКЛАМА': '47',
+                'КН': '49'
+            }
+            
+            for direction, row in direction_cells.items():
+                cell = f"{column_letter}{row}"
+                # Ищем направление в данных (с учетом регистра)
+                amount = 0
+                for db_direction, db_amount in directions_data.items():
+                    if db_direction.upper() == direction:
+                        amount = float(db_amount) if db_amount else 0
+                        break
+                
+                # Добавим отладочный вывод
+                print(f"Записываю в ячейку {cell} для направления '{direction}' сумму: {amount}")
+                
+                # Записываем число
+                sheet_obsh[cell] = amount
+        else:
+            with client:
+                ui.notify('Лист "общ" не найден в файле', type='warning')
+        
+        # 4. Обработка листа "Авто"
+        if "Авто" in wb.sheetnames:
+            sheet_auto = wb["Авто"]
+            
+            # Получаем суммы для РОЗНИЦА и ПОТРЕБИТЕЛИ из sales
+            roznica_amount = sales_data.get('РОЗНИЦА', 0)
+            potrebiteli_amount = sales_data.get('ПОТРЕБИТЕЛИ', 0)
+            
+            # Записываем в ячейки
+            sheet_auto['R5'] = float(roznica_amount) if roznica_amount else 0
+            sheet_auto['R7'] = float(potrebiteli_amount) if potrebiteli_amount else 0
+            
+            print(f"Записываю в ячейку R5 (РОЗНИЦА) сумму: {roznica_amount}")
+            print(f"Записываю в ячейку R7 (ПОТРЕБИТЕЛИ) сумму: {potrebiteli_amount}")
+            
+            # Получаем данные из monthly_group_product
+            group_product_cells = {
+                'АВТОТЕНТЫ': 'R36',
+                'АВТОПОЛОГИ': 'R37',
+                'АВТОКАРКАСЫ': 'R38',
+                'ВОРОТА': 'R39',
+                'АВТОУСЛУГИ': 'R42',
+                'МСК': 'R43',
+                'РЕМОНТ': 'R44',
+                'ПРОЧЕЕ': 'R45'
+            }
+            
+            for group_product, cell in group_product_cells.items():
+                amount = monthly_group_data.get(group_product, 0)
+                sheet_auto[cell] = float(amount) if amount else 0
+                print(f"Записываю в ячейку {cell} для group_product '{group_product}' сумму: {amount}")
+            
+            # Получаем данные из sales по responsibility
+            svoya_amount = sales_responsibility_data.get('СВОЯ', 0)
+            chuzhaya_amount = sales_responsibility_data.get('ЧУЖАЯ', 0)
+            
+            # Записываем в ячейки R74 и R75
+            sheet_auto['R74'] = float(svoya_amount) if svoya_amount else 0
+            sheet_auto['R75'] = float(chuzhaya_amount) if chuzhaya_amount else 0
+            
+            print(f"Записываю в ячейку R74 (СВОЯ) сумму: {svoya_amount}")
+            print(f"Записываю в ячейку R75 (ЧУЖАЯ) сумму: {chuzhaya_amount}")
+            
+        else:
+            with client:
+                ui.notify('Лист "Авто" не найден в файле', type='warning')
         
         # Формируем имя для сохранения
         output_filename = f"Самара {month_number} Отчет {selected_year} {selected_month_name}.xlsm"
@@ -234,12 +493,15 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year, clien
             except:
                 pass
 
-async def handle_file_upload(e, selected_month_name, selected_year, client):
+async def handle_file_upload(e, selected_month_name, selected_year, directions_data, sales_data, monthly_group_data, sales_responsibility_data):
     """Асинхронная обработка загрузки файла"""
     if not selected_month_name or not selected_year:
-        with client:
+        with ui.context.client:
             ui.notify('Сначала выберите год и месяц', type='warning')
         return
+    
+    # Получаем клиент из контекста события
+    client = e.client
     
     # Создаем временный файл с правильным расширением
     with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsm') as tmp_file:
@@ -249,10 +511,12 @@ async def handle_file_upload(e, selected_month_name, selected_year, client):
         temp_file_path = tmp_file.name
     
     # Обрабатываем файл
-    process_excel_file(temp_file_path, selected_month_name, selected_year, client)
+    process_excel_file(temp_file_path, selected_month_name, selected_year, directions_data, sales_data, monthly_group_data, sales_responsibility_data, client)
 
 def on_button_click():
     """Обработчик нажатия кнопки получения данных"""
+    global cached_data, cached_sales_data, cached_monthly_group_data, cached_sales_responsibility_data, current_results_container
+    
     selected_year = select_year.value
     selected_month_name = select_month.value
     selected_month_number = month_to_number[selected_month_name]
@@ -261,7 +525,25 @@ def on_button_click():
     
     data = fetch_data_by_direction(selected_year, selected_month_number)
     
-    result_container.clear()
+    # Сохраняем данные для использования при загрузке файла
+    directions_data = fetch_data_for_directions(selected_year, selected_month_number)
+    sales_data = fetch_sales_data(selected_year, selected_month_number)
+    monthly_group_data = fetch_monthly_group_products(selected_year, selected_month_number)
+    sales_responsibility_data = fetch_sales_responsibility_data(selected_year, selected_month_number)
+    cached_data = directions_data
+    cached_sales_data = sales_data
+    cached_monthly_group_data = monthly_group_data
+    cached_sales_responsibility_data = sales_responsibility_data
+    
+    # Отладочный вывод
+    print(f"Сохраненные данные для направлений: {cached_data}")
+    print(f"Сохраненные данные из sales: {cached_sales_data}")
+    print(f"Сохраненные данные из monthly_group_product: {cached_monthly_group_data}")
+    print(f"Сохраненные данные из sales (responsibility): {cached_sales_responsibility_data}")
+    
+    # Очищаем и пересоздаем контейнер результатов
+    if current_results_container:
+        current_results_container.clear()
     
     with result_container:
         if data and len(data) > 0:
@@ -283,6 +565,8 @@ def on_button_click():
                 ui.label(f'{total_all:,.2f} руб.').classes('text-h6 font-bold text-primary')
         else:
             ui.label(f'Нет данных за {selected_month_name} {selected_year}').classes('text-body1 text-grey-8')
+    
+    current_results_container = result_container
 
 # Создаем интерфейс
 with ui.card().classes('w-full p-4 mb-4'):
@@ -298,7 +582,10 @@ with ui.card().classes('w-full p-4 mb-4'):
                 e, 
                 select_month.value, 
                 select_year.value,
-                ui.context.client
+                cached_data,
+                cached_sales_data,
+                cached_monthly_group_data,
+                cached_sales_responsibility_data
             )),
             auto_upload=True
         ).classes('w-auto')
