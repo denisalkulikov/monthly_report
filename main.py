@@ -109,8 +109,11 @@ cached_angar_sales_data = None
 cached_kn_monthly_group_data = None
 cached_kn_sales_data = None
 cached_kn_sales_responsibility_data = None
+cached_total_shipping_sum_angar = None
+cached_total_shipping_sum_kn = None
+cached_total_shipping_sum_reklama = None
+cached_total_shipping_sum_tk = None
 current_results_container = None
-
 
 def get_db_connection():
     """Создание подключения к БД"""
@@ -123,6 +126,46 @@ def get_db_connection():
         print(traceback.format_exc())
         ui.notify(error_msg, type='negative')
         return None
+
+
+def fetch_total_shipping_sum(year_value, month_number, direction):
+    """Запрос для получения общей суммы shipping_sum по направлению"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return 0
+
+        cur = conn.cursor()
+
+        query = """
+                SELECT COALESCE(SUM(shipping_sum), 0) as total_summ
+                FROM kamtent.sales
+                WHERE EXTRACT(YEAR FROM TO_DATE(shipping_date, 'YYYY-MM-DD')) = %s
+                  AND EXTRACT(MONTH FROM TO_DATE(shipping_date, 'YYYY-MM-DD')) = %s
+                  AND direction = %s
+                  AND shipping_date IS NOT NULL
+                  AND shipping_date != '' \
+                """
+
+        print(
+            f"Выполняю запрос общей shipping_sum для {direction}: {query} с параметрами year={year_value}, month={month_number}")
+        cur.execute(query, (year_value, month_number, direction))
+        result = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        total = result[0] if result and result[0] else 0
+        print(f"Общая shipping_sum для {direction}: {total}")
+
+        return total
+
+    except Exception as e:
+        error_msg = f'Ошибка при выполнении запроса общей shipping_sum: {e}'
+        print(error_msg)
+        print(traceback.format_exc())
+        ui.notify(error_msg, type='negative')
+        return 0
 
 
 def fetch_data_by_direction(year_value, month_number):
@@ -571,7 +614,9 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year,
                        tk_sales_responsibility_data, reklama_monthly_group_data,
                        reklama_sales_responsibility_data, reklama_total,
                        angar_monthly_group_data, angar_sales_data,
-                       kn_monthly_group_data, kn_sales_data, kn_sales_responsibility_data, client):
+                       kn_monthly_group_data, kn_sales_data, kn_sales_responsibility_data,
+                       total_shipping_angar, total_shipping_kn, total_shipping_reklama,
+                       total_shipping_tk, realization_amount_value, client):
     """Обработка Excel файла"""
     output_path = None
     try:
@@ -637,7 +682,64 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year,
             with client:
                 ui.notify('Лист "общ" не найден в файле', type='warning')
 
-        # 4. Обработка листа "Авто"
+        # 4. Обработка листа "сегм"
+        if "сегм" in wb.sheetnames:
+            sheet_segm = wb["сегм"]
+            month_number = month_to_number[selected_month_name]
+            column_letter = month_to_column[month_number]
+
+            # Записываем общую shipping_sum по АНГАРЫ
+            cell_angar = f"{column_letter}48"
+            sheet_segm[cell_angar] = float(total_shipping_angar) if total_shipping_angar else 0
+            print(f"Записываю в ячейку {cell_angar} (shipping_sum АНГАРЫ) сумму: {total_shipping_angar}")
+
+            # Записываем общую shipping_sum по КН
+            cell_kn = f"{column_letter}49"
+            sheet_segm[cell_kn] = float(total_shipping_kn) if total_shipping_kn else 0
+            print(f"Записываю в ячейку {cell_kn} (shipping_sum КН) сумму: {total_shipping_kn}")
+
+            # Вычисляем разницу и записываем в B47, C47 и т.д.
+            difference = float(realization_amount_value) - float(total_shipping_angar) - float(total_shipping_kn)
+            cell_diff = f"{column_letter}47"
+            sheet_segm[cell_diff] = difference if difference else 0
+            print(f"Записываю в ячейку {cell_diff} (разница) сумму: {difference}")
+
+        else:
+            with client:
+                ui.notify('Лист "сегм" не найден в файле', type='warning')
+
+        # 5. Обработка листа "Ателье"
+        if "Ателье" in wb.sheetnames:
+            sheet_atelier = wb["Ателье"]
+
+            # Записываем общую shipping_sum по РЕКЛАМА в Q33
+            sheet_atelier['Q33'] = float(total_shipping_reklama) if total_shipping_reklama else 0
+            print(f"Записываю в ячейку Q33 (shipping_sum РЕКЛАМА) сумму: {total_shipping_reklama}")
+
+            # Записываем общую shipping_sum по ТК в Q32
+            sheet_atelier['Q32'] = float(total_shipping_tk) if total_shipping_tk else 0
+            print(f"Записываю в ячейку Q32 (shipping_sum ТК) сумму: {total_shipping_tk}")
+
+            # Получаем разницу из листа "сегм" для текущего месяца
+            month_number = month_to_number[selected_month_name]
+            column_letter = month_to_column[month_number]
+
+            # Временно создаем переменную для хранения разницы
+            # Используем ту же логику, что и для листа "сегм"
+            diff_from_segm = float(realization_amount_value) - float(total_shipping_angar) - float(total_shipping_kn)
+
+            # Вычитаем суммы РЕКЛАМА и ТК
+            result = diff_from_segm - float(total_shipping_reklama) - float(total_shipping_tk)
+
+            # Записываем в ячейку Q31
+            sheet_atelier['Q31'] = result if result else 0
+            print(f"Записываю в ячейку Q31 (результат) сумму: {result}")
+
+        else:
+            with client:
+                ui.notify('Лист "Ателье" не найден в файле', type='warning')
+
+        # 6. Обработка листа "Авто"
         if "Авто" in wb.sheetnames:
             sheet_auto = wb["Авто"]
 
@@ -684,7 +786,7 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year,
             with client:
                 ui.notify('Лист "Авто" не найден в файле', type='warning')
 
-        # 5. Обработка листа "ТК"
+        # 7. Обработка листа "ТК"
         if "ТК" in wb.sheetnames:
             sheet_tk = wb["ТК"]
 
@@ -738,7 +840,7 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year,
             with client:
                 ui.notify('Лист "ТК" не найден в файле', type='warning')
 
-        # 6. Обработка листа "Реклама"
+        # 8. Обработка листа "Реклама"
         if "Реклама" in wb.sheetnames:
             sheet_reklama = wb["Реклама"]
 
@@ -774,7 +876,7 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year,
             with client:
                 ui.notify('Лист "Реклама" не найден в файле', type='warning')
 
-        # 7. Обработка листа "Ангар"
+        # 9. Обработка листа "Ангар"
         if "Ангар" in wb.sheetnames:
             sheet_angar = wb["Ангар"]
 
@@ -808,7 +910,7 @@ def process_excel_file(temp_file_path, selected_month_name, selected_year,
             with client:
                 ui.notify('Лист "Ангар" не найден в файле', type='warning')
 
-        # 8. Обработка листа "Ком"
+        # 10. Обработка листа "Ком"
         if "Ком" in wb.sheetnames:
             sheet_kn = wb["Ком"]
 
@@ -883,12 +985,22 @@ async def handle_file_upload(e, selected_month_name, selected_year, directions_d
                              tk_monthly_group_data, tk_sales_responsibility_data,
                              reklama_monthly_group_data, reklama_sales_responsibility_data,
                              reklama_total, angar_monthly_group_data, angar_sales_data,
-                             kn_monthly_group_data, kn_sales_data, kn_sales_responsibility_data):
+                             kn_monthly_group_data, kn_sales_data, kn_sales_responsibility_data,
+                             total_shipping_angar, total_shipping_kn, total_shipping_reklama,
+                             total_shipping_tk):
     """Асинхронная обработка загрузки файла"""
     if not selected_month_name or not selected_year:
         with ui.context.client:
             ui.notify('Сначала выберите год и месяц', type='warning')
         return
+
+    # Получаем актуальную сумму реализации из поля ввода в момент загрузки файла
+    try:
+        realization_amount_value = float(realization_input.value) if realization_input.value else 0
+    except (ValueError, TypeError):
+        realization_amount_value = 0
+
+    print(f"Сумма реализации при загрузке файла: {realization_amount_value}")
 
     # Получаем клиент из контекста события
     client = e.client
@@ -907,8 +1019,9 @@ async def handle_file_upload(e, selected_month_name, selected_year, directions_d
                        tk_sales_responsibility_data, reklama_monthly_group_data,
                        reklama_sales_responsibility_data, reklama_total,
                        angar_monthly_group_data, angar_sales_data,
-                       kn_monthly_group_data, kn_sales_data, kn_sales_responsibility_data, client)
-
+                       kn_monthly_group_data, kn_sales_data, kn_sales_responsibility_data,
+                       total_shipping_angar, total_shipping_kn, total_shipping_reklama,
+                       total_shipping_tk, realization_amount_value, client)
 
 def on_button_click():
     """Обработчик нажатия кнопки получения данных"""
@@ -917,10 +1030,19 @@ def on_button_click():
     global cached_reklama_monthly_group_data, cached_reklama_sales_responsibility_data, cached_reklama_total
     global cached_angar_monthly_group_data, cached_angar_sales_data
     global cached_kn_monthly_group_data, cached_kn_sales_data, cached_kn_sales_responsibility_data
+    global cached_total_shipping_sum_angar, cached_total_shipping_sum_kn, cached_total_shipping_sum_reklama
+    global cached_total_shipping_sum_tk
 
     selected_year = select_year.value
     selected_month_name = select_month.value
     selected_month_number = month_to_number[selected_month_name]
+
+    # Получаем значение из поля ввода
+    realization_amount_value = realization_input.value if realization_input.value else 0
+    try:
+        realization_amount_value = float(realization_amount_value)
+    except:
+        realization_amount_value = 0
 
     ui.notify(f'Загружаю данные за {selected_month_name} {selected_year}...', type='info')
 
@@ -945,10 +1067,16 @@ def on_button_click():
     angar_monthly_group_data = fetch_monthly_group_products(selected_year, selected_month_number, 'АНГАРЫ')
     angar_sales_data = fetch_angar_sales_data(selected_year, selected_month_number)
 
-    # Данные для листа Ком
+    # Данные для листа КН
     kn_monthly_group_data = fetch_monthly_group_products(selected_year, selected_month_number, 'КН')
     kn_sales_data = fetch_kn_sales_data(selected_year, selected_month_number)
     kn_sales_responsibility_data = fetch_sales_responsibility_data(selected_year, selected_month_number, 'КН')
+
+    # Общие суммы shipping_sum
+    total_shipping_angar = fetch_total_shipping_sum(selected_year, selected_month_number, 'АНГАРЫ')
+    total_shipping_kn = fetch_total_shipping_sum(selected_year, selected_month_number, 'КН')
+    total_shipping_reklama = fetch_total_shipping_sum(selected_year, selected_month_number, 'РЕКЛАМА')
+    total_shipping_tk = fetch_total_shipping_sum(selected_year, selected_month_number, 'ТК')
 
     cached_data = directions_data
     cached_sales_data = sales_data
@@ -964,6 +1092,10 @@ def on_button_click():
     cached_kn_monthly_group_data = kn_monthly_group_data
     cached_kn_sales_data = kn_sales_data
     cached_kn_sales_responsibility_data = kn_sales_responsibility_data
+    cached_total_shipping_sum_angar = total_shipping_angar
+    cached_total_shipping_sum_kn = total_shipping_kn
+    cached_total_shipping_sum_reklama = total_shipping_reklama
+    cached_total_shipping_sum_tk = total_shipping_tk
 
     # Отладочный вывод
     print(f"Сохраненные данные для направлений: {cached_data}")
@@ -980,6 +1112,10 @@ def on_button_click():
     print(f"Сохраненные данные из monthly_group_product (КН): {cached_kn_monthly_group_data}")
     print(f"Сохраненные данные из sales (КН): {cached_kn_sales_data}")
     print(f"Сохраненные данные из sales (responsibility КН): {cached_kn_sales_responsibility_data}")
+    print(f"Общая shipping_sum АНГАРЫ: {cached_total_shipping_sum_angar}")
+    print(f"Общая shipping_sum КН: {cached_total_shipping_sum_kn}")
+    print(f"Общая shipping_sum РЕКЛАМА: {cached_total_shipping_sum_reklama}")
+    print(f"Общая shipping_sum ТК: {cached_total_shipping_sum_tk}")
 
     # Очищаем и пересоздаем контейнер результатов
     if current_results_container:
@@ -1014,6 +1150,11 @@ with ui.card().classes('w-full p-4 mb-4'):
     with ui.row().classes('items-end gap-4'):
         select_year = ui.select(options=year, value=2026, label='Выберите год').classes('w-40')
         select_month = ui.select(options=month, value='Январь', label='Выберите месяц').classes('w-40')
+
+        # Поле для ввода суммы реализации
+        realization_input = ui.number(label='Сумма реализации (отгрузки)', value=0, step=1000, format='%.2f').classes(
+            'w-48')
+
         ui.button('Получить данные', on_click=on_button_click, icon='search').classes('bg-primary text-white')
 
         # Кнопка для загрузки файла
@@ -1036,7 +1177,11 @@ with ui.card().classes('w-full p-4 mb-4'):
                 cached_angar_sales_data,
                 cached_kn_monthly_group_data,
                 cached_kn_sales_data,
-                cached_kn_sales_responsibility_data
+                cached_kn_sales_responsibility_data,
+                cached_total_shipping_sum_angar,
+                cached_total_shipping_sum_kn,
+                cached_total_shipping_sum_reklama,
+                cached_total_shipping_sum_tk
             )),
             auto_upload=True
         ).classes('w-auto')
